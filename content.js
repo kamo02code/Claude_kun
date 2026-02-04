@@ -9,11 +9,11 @@
 
   const LOG_PREFIX = "[Meet Auto Record]";
   const POLL_INTERVAL_MS = 2000;
-  const MAX_RETRY = 30;
 
   let isEnabled = true;
   let hasAttemptedRecording = false;
   let meetingDetected = false;
+  let lobbyLogged = false;
 
   // --- ユーティリティ ---
 
@@ -158,9 +158,33 @@
 
   // --- ミーティング参加検知 ---
 
+  /**
+   * ロビー (待機画面) かどうかを判定する。
+   * 「今すぐ参加」ボタンや「参加の準備は整いましたか？」テキストがあればロビー。
+   */
+  function isInLobby() {
+    // 「今すぐ参加」ボタンがあればロビー
+    if (findElementByText("button, [role='button'], span", ["今すぐ参加", "Join now", "Ask to join"])) return true;
+    // 「参加の準備は整いましたか？」テキストがあればロビー
+    if (findElementByText("h1, h2, div, span", ["参加の準備は整いましたか", "Ready to join?", "Getting ready"])) return true;
+    return false;
+  }
+
+  /**
+   * ミーティングに実際に参加しているか判定する。
+   * ロビー (待機画面) では false を返す。
+   * 「通話から退出」ボタンの存在が最も確実な判定基準。
+   */
   function isInMeeting() {
+    // ロビーにいる場合は参加していない
+    if (isInLobby()) return false;
+
+    // 「通話から退出」ボタンがあれば確実にミーティング中
     if (findElementByAttribute(["通話から退出", "Leave call"])) return true;
+
+    // 退出ボタンが見つからない場合、マイクボタンがあり、かつロビーでなければ参加中
     if (findElementByAttribute(["マイクをオフ", "マイクをオン", "Turn off microphone", "Turn on microphone"])) return true;
+
     return false;
   }
 
@@ -364,25 +388,27 @@
   // --- 監視ループ ---
 
   async function monitorMeeting() {
-    log("ミーティング監視を開始します...");
-    let retryCount = 0;
+    log("ミーティング監視を開始します（ロビー待機中も継続）...");
 
     const checkInterval = setInterval(async () => {
       if (!isEnabled) return;
       if (meetingDetected && hasAttemptedRecording) return;
 
+      if (isInLobby()) {
+        if (!lobbyLogged) {
+          log("ロビー (待機画面) を検知。参加を待機中...");
+          lobbyLogged = true;
+        }
+        return;
+      }
+
       if (isInMeeting()) {
         if (!meetingDetected) {
           meetingDetected = true;
           log("ミーティングへの参加を検知しました！");
+          // ミーティング参加後、UIが安定するまで待機
           await sleep(5000);
           await startRecording();
-        }
-      } else {
-        retryCount++;
-        if (retryCount > MAX_RETRY) {
-          log("ミーティング検知のリトライ上限に達しました");
-          clearInterval(checkInterval);
         }
       }
     }, POLL_INTERVAL_MS);
