@@ -53,13 +53,14 @@
   }
 
   /**
-   * aria-label を部分一致で検索してボタンを取得する。
-   * Google Meet は日本語/英語で aria-label が変わるため両方対応。
+   * aria-label または data-tooltip を部分一致で検索してボタンを取得する。
+   * Google Meet は aria-label / data-tooltip の両方を使い分ける。
    */
   function findButtonByAriaLabel(labels) {
     for (const label of labels) {
       const buttons = document.querySelectorAll(
-        `button[aria-label*="${label}"], [role="button"][aria-label*="${label}"]`
+        `button[aria-label*="${label}"], [role="button"][aria-label*="${label}"], ` +
+        `button[data-tooltip*="${label}"], [role="button"][data-tooltip*="${label}"]`
       );
       if (buttons.length > 0) return buttons[0];
     }
@@ -118,44 +119,94 @@
   // --- 録画操作 ---
 
   /**
-   * 「その他のオプション」メニューを開く
+   * 「その他のオプション」(縦3点) メニューを開く。
+   * aria-label / data-tooltip / ツールチップテキストなど複数の方法で検索。
    */
   async function openMoreOptionsMenu() {
-    log("「その他のオプション」メニューを開きます...");
-    const moreButton = findButtonByAriaLabel([
+    log("「その他のオプション」(縦3点) ボタンを探しています...");
+
+    let moreButton = null;
+
+    // 方法1: aria-label / data-tooltip で検索
+    moreButton = findButtonByAriaLabel([
       "その他のオプション",
       "More options",
       "Más opciones",
     ]);
+
+    // 方法2: data-promo 属性で検索 (Google Meet が使う場合あり)
+    if (!moreButton) {
+      moreButton = document.querySelector(
+        'button[data-promo*="more"], [role="button"][data-promo*="more"]'
+      );
+    }
+
+    // 方法3: 通話バー内の縦3点アイコンボタンを探す
+    // Google Meet の3点ボタンは通常、退出ボタンの左隣にある
+    if (!moreButton) {
+      const allButtons = document.querySelectorAll('button, [role="button"]');
+      for (const btn of allButtons) {
+        const label = (btn.getAttribute("aria-label") || "")
+          + (btn.getAttribute("data-tooltip") || "");
+        if (
+          label.includes("その他") ||
+          label.includes("More option") ||
+          label.includes("more option")
+        ) {
+          moreButton = btn;
+          break;
+        }
+      }
+    }
+
+    // 方法4: material icon "more_vert" を含むボタンを探す
+    if (!moreButton) {
+      const icons = document.querySelectorAll(
+        'i.material-icons, i.google-material-icons, .google-symbols'
+      );
+      for (const icon of icons) {
+        if (icon.textContent.trim() === "more_vert") {
+          moreButton = icon.closest("button") || icon.closest('[role="button"]');
+          if (moreButton) break;
+        }
+      }
+    }
+
     if (!moreButton) {
       throw new Error("「その他のオプション」ボタンが見つかりません");
     }
+
+    log("3点メニューボタンを見つけました。クリックします...");
     moreButton.click();
     await sleep(1000);
   }
 
   /**
-   * メニューから「録画」または「ミーティングを録画」を選択
+   * メニューから「録画を管理する」を選択
    */
   async function clickRecordingMenuItem() {
     log("録画メニュー項目を探しています...");
 
     const menuItem = await waitForElement(() => {
-      // メニュー項目からテキストで検索
-      return findElementByText("li, [role='menuitem'], [role='option']", [
-        "ミーティングを録画",
-        "録画を管理",
-        "録画",
-        "Record meeting",
-        "Manage recording",
-        "Recording",
-      ]);
+      // メニュー項目 / リスト項目 / div 等、幅広くテキスト検索
+      return findElementByText(
+        'li, [role="menuitem"], [role="option"], [role="menuitemradio"], ul > div, ul li span',
+        [
+          "録画を管理する",
+          "録画を管理",
+          "ミーティングを録画",
+          "録画",
+          "Manage recording",
+          "Record meeting",
+          "Recording",
+        ]
+      );
     }, 5000);
 
     if (!menuItem) {
       throw new Error("録画メニュー項目が見つかりません");
     }
-    log("録画メニュー項目をクリックします");
+    log(`録画メニュー項目「${menuItem.textContent.trim()}」をクリックします`);
     menuItem.click();
     await sleep(1500);
   }
