@@ -47,65 +47,96 @@
     });
   }
 
-  // --- デバッグ: ページ上の全ボタンをダンプ ---
+  // --- デバッグ ---
 
-  function debugDumpButtons() {
-    const buttons = document.querySelectorAll('button, [role="button"]');
-    log(`===== ページ上のボタン一覧 (${buttons.length}個) =====`);
-    buttons.forEach((btn, i) => {
-      const info = {
-        index: i,
-        tag: btn.tagName,
-        ariaLabel: btn.getAttribute("aria-label"),
-        dataTooltip: btn.getAttribute("data-tooltip"),
-        title: btn.getAttribute("title"),
-        text: btn.textContent.trim().substring(0, 50),
-        className: btn.className.substring(0, 80),
-        rect: btn.getBoundingClientRect(),
-      };
-      // 画面下部 (Y > 画面高さの70%) にあるボタンのみ詳細出力
-      if (info.rect.top > window.innerHeight * 0.6) {
-        console.log(`${LOG_PREFIX} ボタン[${i}]:`, JSON.stringify(info, null, 2));
+  /**
+   * ツールバー付近の全インタラクティブ要素をダンプ。
+   * button / role=button だけでなく、data-tooltip を持つ要素や
+   * 画面下部のクリック可能な要素を全て出力する。
+   */
+  function debugDumpToolbar() {
+    log("===== ツールバー要素ダンプ =====");
+
+    // data-tooltip を持つ全要素
+    const tooltipEls = document.querySelectorAll("[data-tooltip]");
+    log(`data-tooltip 付き要素: ${tooltipEls.length}個`);
+    tooltipEls.forEach((el, i) => {
+      console.log(`${LOG_PREFIX} [tooltip ${i}]`, {
+        tag: el.tagName,
+        role: el.getAttribute("role"),
+        ariaLabel: el.getAttribute("aria-label"),
+        dataTooltip: el.getAttribute("data-tooltip"),
+        text: el.textContent.trim().substring(0, 40),
+        rect: el.getBoundingClientRect(),
+      });
+    });
+
+    // 画面下部 30% の全クリック可能要素
+    const allEls = document.querySelectorAll("*");
+    const screenH = window.innerHeight;
+    const threshold = screenH * 0.7;
+    let count = 0;
+    allEls.forEach((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.top > threshold && r.width > 20 && r.width < 80 && r.height > 20 && r.height < 80) {
+        const style = window.getComputedStyle(el);
+        if (style.cursor === "pointer" || el.getAttribute("role") || el.tagName === "BUTTON") {
+          console.log(`${LOG_PREFIX} [底部要素 ${count}]`, {
+            tag: el.tagName,
+            role: el.getAttribute("role"),
+            ariaLabel: el.getAttribute("aria-label"),
+            dataTooltip: el.getAttribute("data-tooltip"),
+            text: el.textContent.trim().substring(0, 40),
+            x: Math.round(r.left),
+            y: Math.round(r.top),
+            w: Math.round(r.width),
+            h: Math.round(r.height),
+          });
+          count++;
+        }
+      }
+    });
+    log(`底部クリック可能要素: ${count}個`);
+    log("===== ダンプ終了 =====");
+  }
+
+  function debugDumpMenuItems() {
+    log("===== メニュー項目ダンプ =====");
+    const items = document.querySelectorAll(
+      'li, [role="menuitem"], [role="option"], [role="menuitemradio"], [role="listitem"]'
+    );
+    const seen = new Set();
+    items.forEach((el) => {
+      const text = el.textContent.trim();
+      if (text && !seen.has(text)) {
+        seen.add(text);
+        console.log(`${LOG_PREFIX} メニュー:`, text.substring(0, 80));
       }
     });
     log("===== ダンプ終了 =====");
   }
 
-  function debugDumpMenuItems() {
-    log("===== 表示中のメニュー項目 =====");
-    const selectors = [
-      'li', '[role="menuitem"]', '[role="option"]',
-      '[role="menuitemradio"]', '[role="listitem"]',
-    ];
-    const seen = new Set();
-    for (const sel of selectors) {
-      document.querySelectorAll(sel).forEach((el) => {
-        const text = el.textContent.trim();
-        if (text && !seen.has(text)) {
-          seen.add(text);
-          console.log(`${LOG_PREFIX} メニュー項目 [${sel}]:`, text);
-        }
-      });
-    }
-    // ポップアップ/オーバーレイ内の要素も探す
-    document.querySelectorAll('[role="menu"], [role="dialog"], [role="listbox"]').forEach((container) => {
-      console.log(`${LOG_PREFIX} メニューコンテナ:`, container.tagName, container.getAttribute("role"), container.innerHTML.substring(0, 500));
-    });
-    log("===== メニューダンプ終了 =====");
-  }
-
   // --- 要素検索 ---
 
-  function findButtonByAttributes(labels) {
+  /**
+   * data-tooltip / aria-label / title を部分一致で検索。
+   * button や role=button に限定せず、全要素を対象にする。
+   */
+  function findElementByAttribute(labels, exactMatch = false) {
     for (const label of labels) {
       const lower = label.toLowerCase();
-      const buttons = document.querySelectorAll('button, [role="button"]');
-      for (const btn of buttons) {
-        const ariaLabel = (btn.getAttribute("aria-label") || "").toLowerCase();
-        const tooltip = (btn.getAttribute("data-tooltip") || "").toLowerCase();
-        const title = (btn.getAttribute("title") || "").toLowerCase();
-        if (ariaLabel.includes(lower) || tooltip.includes(lower) || title.includes(lower)) {
-          return btn;
+      // data-tooltip 持ちの要素を優先的に検索
+      const candidates = document.querySelectorAll(
+        '[data-tooltip], [aria-label], button, [role="button"]'
+      );
+      for (const el of candidates) {
+        const ariaLabel = (el.getAttribute("aria-label") || "").toLowerCase();
+        const tooltip = (el.getAttribute("data-tooltip") || "").toLowerCase();
+        const title = (el.getAttribute("title") || "").toLowerCase();
+        if (exactMatch) {
+          if (ariaLabel === lower || tooltip === lower || title === lower) return el;
+        } else {
+          if (ariaLabel.includes(lower) || tooltip.includes(lower) || title.includes(lower)) return el;
         }
       }
     }
@@ -128,17 +159,8 @@
   // --- ミーティング参加検知 ---
 
   function isInMeeting() {
-    const leaveButton = findButtonByAttributes([
-      "通話から退出", "Leave call",
-    ]);
-    if (leaveButton) return true;
-
-    const micButton = findButtonByAttributes([
-      "マイクをオフ", "マイクをオン",
-      "Turn off microphone", "Turn on microphone",
-    ]);
-    if (micButton) return true;
-
+    if (findElementByAttribute(["通話から退出", "Leave call"])) return true;
+    if (findElementByAttribute(["マイクをオフ", "マイクをオン", "Turn off microphone", "Turn on microphone"])) return true;
     return false;
   }
 
@@ -146,77 +168,88 @@
 
   /**
    * 縦3点 (⋮) ボタンを探す。
-   * 複数の方法で検索し、見つからない場合はデバッグ情報を出力。
    */
-  async function findMoreOptionsButton() {
+  function findMoreOptionsButton() {
     let btn = null;
 
-    // 方法1: aria-label / data-tooltip / title 属性
-    btn = findButtonByAttributes([
-      "その他のオプション",
-      "その他",
-      "More options",
-    ]);
-    if (btn) { log("方法1 (属性) で3点ボタンを発見"); return btn; }
+    // 方法1: 完全一致で "その他のオプション" を検索
+    // ※ "その他" だけだと "その他の参加方法" にヒットするため完全一致優先
+    btn = findElementByAttribute(["その他のオプション", "More options"], true);
+    if (btn) { log("方法1 (完全一致) で3点ボタンを発見"); return btn; }
 
-    // 方法2: material icon "more_vert" テキスト
-    const icons = document.querySelectorAll("i, span");
-    for (const icon of icons) {
-      if (icon.textContent.trim() === "more_vert") {
-        btn = icon.closest("button") || icon.closest('[role="button"]');
-        if (btn) { log("方法2 (more_vert アイコン) で3点ボタンを発見"); return btn; }
+    // 方法2: 部分一致 "その他のオプション" (完全一致で見つからなかった場合)
+    btn = findElementByAttribute(["その他のオプション", "More options"], false);
+    if (btn) { log("方法2 (部分一致) で3点ボタンを発見"); return btn; }
+
+    // 方法3: material icon "more_vert" を含む要素
+    const allEls = document.querySelectorAll("i, span, div");
+    for (const el of allEls) {
+      if (el.textContent.trim() === "more_vert") {
+        // 親要素がクリック可能なら返す
+        const parent = el.closest('[role="button"]') ||
+                       el.closest("button") ||
+                       el.closest('[data-tooltip]') ||
+                       el.parentElement;
+        if (parent) {
+          log("方法3 (more_vert アイコン) で3点ボタンを発見");
+          return parent;
+        }
       }
     }
 
-    // 方法3: 退出ボタンの近くにあるボタンを探す
-    // 退出ボタン (赤い電話ボタン) を基準に、その直前のボタンが3点メニュー
-    const leaveBtn = findButtonByAttributes([
-      "通話から退出", "Leave call",
-    ]);
-    if (leaveBtn) {
-      const leaveRect = leaveBtn.getBoundingClientRect();
+    // 方法4: マイクボタンと同じ Y 座標の行にある、
+    // マイク/カメラ以外のボタンで右寄りのもの
+    const micBtn = findElementByAttribute(["マイクをオフ", "マイクをオン"]);
+    if (micBtn) {
+      const micRect = micBtn.getBoundingClientRect();
       const candidates = [];
-      const allButtons = document.querySelectorAll('button, [role="button"]');
-      for (const b of allButtons) {
-        if (b === leaveBtn) continue;
-        const r = b.getBoundingClientRect();
-        // 同じ行（Y座標が近い）で、退出ボタンの左側にあるボタン
-        if (Math.abs(r.top - leaveRect.top) < 30 && r.right < leaveRect.left && r.right > leaveRect.left - 200) {
-          candidates.push({ btn: b, distance: leaveRect.left - r.right });
+
+      // data-tooltip を持つ要素から、同じツールバー行にあるものを検索
+      document.querySelectorAll("[data-tooltip]").forEach((el) => {
+        const r = el.getBoundingClientRect();
+        // 同じ行 (Y 座標が近い) で、マイクより右にあるもの
+        if (
+          Math.abs(r.top - micRect.top) < 20 &&
+          r.left > micRect.left &&
+          r.width > 10 && r.width < 100
+        ) {
+          const tooltip = el.getAttribute("data-tooltip") || "";
+          const ariaLabel = el.getAttribute("aria-label") || "";
+          // マイク/カメラ/背景は除外
+          if (
+            !tooltip.includes("マイク") && !tooltip.includes("カメラ") &&
+            !tooltip.includes("背景") && !ariaLabel.includes("マイク") &&
+            !ariaLabel.includes("カメラ") && !ariaLabel.includes("背景")
+          ) {
+            candidates.push({ el, x: r.left, tooltip, ariaLabel });
+          }
         }
-      }
-      // 退出ボタンに最も近いボタンを選択
-      candidates.sort((a, b) => a.distance - b.distance);
+      });
+
+      // 最も右にあるものが3点ボタンの可能性が高い
+      candidates.sort((a, b) => b.x - a.x);
       if (candidates.length > 0) {
-        log(`方法3 (退出ボタン隣接) で3点ボタン候補を発見 (距離: ${candidates[0].distance.toFixed(0)}px)`);
-        return candidates[0].btn;
+        const best = candidates[0];
+        log(`方法4 (ツールバー行・右端) で候補発見: tooltip="${best.tooltip}", label="${best.ariaLabel}"`);
+        return best.el;
       }
     }
 
-    // 方法4: 画面下部の右寄りにある小さめのボタンを探す
-    // 3点ボタンはアイコンのみで、テキストが空または非常に短い
-    const allButtons = document.querySelectorAll('button, [role="button"]');
-    const bottomRight = [];
-    for (const b of allButtons) {
-      const r = b.getBoundingClientRect();
-      const screenW = window.innerWidth;
-      const screenH = window.innerHeight;
-      // 画面下部20%、中央〜右寄り
-      if (r.top > screenH * 0.8 && r.left > screenW * 0.4 && r.left < screenW * 0.8) {
-        const text = b.textContent.trim();
-        const ariaLabel = b.getAttribute("aria-label") || "";
-        // テキストが空かアイコンテキストのみ
-        if (text.length <= 15 && !ariaLabel.includes("マイク") && !ariaLabel.includes("カメラ")) {
-          bottomRight.push({ btn: b, x: r.left, label: ariaLabel, text });
+    // 方法5: 画面下部全要素から cursor:pointer で more_vert っぽいものを探す
+    const screenH = window.innerHeight;
+    const bottomEls = document.querySelectorAll("*");
+    for (const el of bottomEls) {
+      const r = el.getBoundingClientRect();
+      if (r.top > screenH * 0.8 && r.width > 20 && r.width < 80 && r.height > 20 && r.height < 80) {
+        const text = el.textContent.trim();
+        if (text === "more_vert" || text === "⋮") {
+          const clickable = el.closest('[role="button"]') ||
+                           el.closest("button") ||
+                           el.closest('[data-tooltip]') ||
+                           el;
+          log(`方法5 (bottom more_vert) で発見`);
+          return clickable;
         }
-      }
-    }
-    // X座標が大きい（右寄り）順にソート、退出ボタン以外で最も右のもの
-    bottomRight.sort((a, b) => b.x - a.x);
-    for (const item of bottomRight) {
-      if (!item.label.includes("退出") && !item.label.includes("Leave")) {
-        log(`方法4 (位置ベース) で候補発見: label="${item.label}", text="${item.text}"`);
-        return item.btn;
       }
     }
 
@@ -225,30 +258,26 @@
 
   async function openMoreOptionsMenu() {
     log("縦3点メニューボタンを探しています...");
+    debugDumpToolbar();
 
-    // デバッグ: 全ボタンの情報を出力
-    debugDumpButtons();
+    const moreButton = await waitForElement(findMoreOptionsButton, 10000, 1000);
 
-    const moreButton = await waitForElement(findMoreOptionsButton, 8000, 1000);
-
-    log("3点メニューボタンをクリックします...");
+    log(`3点メニューをクリック: tag=${moreButton.tagName}, tooltip="${moreButton.getAttribute("data-tooltip") || ""}", aria="${moreButton.getAttribute("aria-label") || ""}"`);
     moreButton.click();
     await sleep(1500);
   }
 
   async function clickRecordingMenuItem() {
     log("録画メニュー項目を探しています...");
-
-    // デバッグ: メニュー項目をダンプ
     debugDumpMenuItems();
 
     const menuItem = await waitForElement(() => {
-      // 非常に広いセレクタで検索
       return findElementByText(
         'li, [role="menuitem"], [role="option"], [role="menuitemradio"], [role="listitem"], div[tabindex], span[tabindex]',
         [
           "録画を管理する",
           "録画を管理",
+          "録画をテスト",
           "ミーティングを録画",
           "Manage recording",
           "Record meeting",
@@ -258,7 +287,6 @@
     }, 8000);
 
     if (!menuItem) {
-      // もう一度ダンプしてから失敗
       debugDumpMenuItems();
       throw new Error("録画メニュー項目が見つかりません");
     }
@@ -276,7 +304,7 @@
         "Start recording",
       ]);
       if (btn) return btn;
-      return findButtonByAttributes(["録画を開始", "Start recording"]);
+      return findElementByAttribute(["録画を開始", "Start recording"]);
     }, 8000);
 
     log("「録画を開始」ボタンをクリックします");
@@ -287,58 +315,34 @@
   async function confirmRecordingDialog() {
     log("確認ダイアログを確認しています...");
     await sleep(1000);
-
     try {
       const confirmButton = await waitForElement(() => {
         return findElementByText("button, [role='button']", [
-          "開始",
-          "Start",
-          "同意して録画",
-          "Agree and record",
-          "了解",
-          "OK",
-          "Accept",
+          "開始", "Start", "同意して録画", "Agree and record", "了解", "OK", "Accept",
         ]);
       }, 5000);
-
       if (confirmButton) {
-        log("確認ダイアログの「開始」をクリックします");
+        log("確認ダイアログをクリック");
         confirmButton.click();
         await sleep(1000);
       }
     } catch {
-      log("確認ダイアログは表示されませんでした（不要の場合あり）");
+      log("確認ダイアログなし（不要の場合あり）");
     }
   }
 
   function isAlreadyRecording() {
-    const stopButton = findButtonByAttributes(["録画を停止", "Stop recording"]);
-    if (stopButton) return true;
-
-    const recordingDot = document.querySelector(
-      '[data-recording-indicator], [aria-label*="Recording"]'
-    );
-    if (recordingDot) return true;
-
+    if (findElementByAttribute(["録画を停止", "Stop recording"])) return true;
+    if (document.querySelector('[data-recording-indicator]')) return true;
     return false;
   }
 
   // --- メインフロー ---
 
   async function startRecording() {
-    if (!isEnabled) {
-      log("自動録画は無効です");
-      return;
-    }
-    if (hasAttemptedRecording) {
-      log("既に録画開始を試行済みです");
-      return;
-    }
-    if (isAlreadyRecording()) {
-      log("既に録画中です");
-      hasAttemptedRecording = true;
-      return;
-    }
+    if (!isEnabled) { log("自動録画は無効です"); return; }
+    if (hasAttemptedRecording) { log("既に試行済み"); return; }
+    if (isAlreadyRecording()) { log("既に録画中"); hasAttemptedRecording = true; return; }
 
     hasAttemptedRecording = true;
     log("自動録画を開始します...");
@@ -348,17 +352,12 @@
       await clickRecordingMenuItem();
       await clickStartRecording();
       await confirmRecordingDialog();
-
       log("録画の開始に成功しました！");
       chrome.runtime.sendMessage({ type: "RECORDING_STATUS", status: "started" });
     } catch (error) {
       warn(`録画の開始に失敗しました: ${error.message}`);
       hasAttemptedRecording = false;
-      chrome.runtime.sendMessage({
-        type: "RECORDING_STATUS",
-        status: "failed",
-        error: error.message,
-      });
+      chrome.runtime.sendMessage({ type: "RECORDING_STATUS", status: "failed", error: error.message });
     }
   }
 
@@ -407,20 +406,13 @@
   chrome.storage.onChanged.addListener((changes) => {
     if (changes.autoRecordEnabled) {
       isEnabled = changes.autoRecordEnabled.newValue;
-      log(`自動録画設定が変更されました: ${isEnabled ? "有効" : "無効"}`);
+      log(`設定変更: ${isEnabled ? "有効" : "無効"}`);
     }
   });
 
-  // --- メッセージ受信 ---
-
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === "GET_STATUS") {
-      sendResponse({
-        isEnabled,
-        meetingDetected,
-        hasAttemptedRecording,
-        isRecording: isAlreadyRecording(),
-      });
+      sendResponse({ isEnabled, meetingDetected, hasAttemptedRecording, isRecording: isAlreadyRecording() });
     } else if (message.type === "TOGGLE_ENABLED") {
       isEnabled = message.enabled;
       chrome.storage.sync.set({ autoRecordEnabled: isEnabled });
@@ -430,7 +422,7 @@
       startRecording();
       sendResponse({ status: "retrying" });
     } else if (message.type === "DEBUG_DUMP") {
-      debugDumpButtons();
+      debugDumpToolbar();
       debugDumpMenuItems();
       sendResponse({ status: "dumped" });
     }
@@ -441,7 +433,7 @@
 
   function init() {
     if (!window.location.href.match(/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}/i)) {
-      log("ミーティングページではないためスキップします");
+      log("ミーティングページではないためスキップ");
       return;
     }
     log("初期化中...");
