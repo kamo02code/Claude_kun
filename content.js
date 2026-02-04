@@ -2,8 +2,6 @@
  * Google Meet Auto Record - Content Script
  *
  * ミーティング参加を検知し、自動で録画を開始する。
- * Google Meet の DOM は動的クラス名を使用するため、
- * aria-label やテキスト内容で要素を特定する。
  */
 
 (function () {
@@ -31,9 +29,6 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  /**
-   * 指定セレクタまたは条件に一致する要素が現れるまで待機する。
-   */
   function waitForElement(finder, timeoutMs = 10000, intervalMs = 500) {
     return new Promise((resolve, reject) => {
       const start = Date.now();
@@ -52,24 +47,71 @@
     });
   }
 
-  /**
-   * aria-label または data-tooltip を部分一致で検索してボタンを取得する。
-   * Google Meet は aria-label / data-tooltip の両方を使い分ける。
-   */
-  function findButtonByAriaLabel(labels) {
+  // --- デバッグ: ページ上の全ボタンをダンプ ---
+
+  function debugDumpButtons() {
+    const buttons = document.querySelectorAll('button, [role="button"]');
+    log(`===== ページ上のボタン一覧 (${buttons.length}個) =====`);
+    buttons.forEach((btn, i) => {
+      const info = {
+        index: i,
+        tag: btn.tagName,
+        ariaLabel: btn.getAttribute("aria-label"),
+        dataTooltip: btn.getAttribute("data-tooltip"),
+        title: btn.getAttribute("title"),
+        text: btn.textContent.trim().substring(0, 50),
+        className: btn.className.substring(0, 80),
+        rect: btn.getBoundingClientRect(),
+      };
+      // 画面下部 (Y > 画面高さの70%) にあるボタンのみ詳細出力
+      if (info.rect.top > window.innerHeight * 0.6) {
+        console.log(`${LOG_PREFIX} ボタン[${i}]:`, JSON.stringify(info, null, 2));
+      }
+    });
+    log("===== ダンプ終了 =====");
+  }
+
+  function debugDumpMenuItems() {
+    log("===== 表示中のメニュー項目 =====");
+    const selectors = [
+      'li', '[role="menuitem"]', '[role="option"]',
+      '[role="menuitemradio"]', '[role="listitem"]',
+    ];
+    const seen = new Set();
+    for (const sel of selectors) {
+      document.querySelectorAll(sel).forEach((el) => {
+        const text = el.textContent.trim();
+        if (text && !seen.has(text)) {
+          seen.add(text);
+          console.log(`${LOG_PREFIX} メニュー項目 [${sel}]:`, text);
+        }
+      });
+    }
+    // ポップアップ/オーバーレイ内の要素も探す
+    document.querySelectorAll('[role="menu"], [role="dialog"], [role="listbox"]').forEach((container) => {
+      console.log(`${LOG_PREFIX} メニューコンテナ:`, container.tagName, container.getAttribute("role"), container.innerHTML.substring(0, 500));
+    });
+    log("===== メニューダンプ終了 =====");
+  }
+
+  // --- 要素検索 ---
+
+  function findButtonByAttributes(labels) {
     for (const label of labels) {
-      const buttons = document.querySelectorAll(
-        `button[aria-label*="${label}"], [role="button"][aria-label*="${label}"], ` +
-        `button[data-tooltip*="${label}"], [role="button"][data-tooltip*="${label}"]`
-      );
-      if (buttons.length > 0) return buttons[0];
+      const lower = label.toLowerCase();
+      const buttons = document.querySelectorAll('button, [role="button"]');
+      for (const btn of buttons) {
+        const ariaLabel = (btn.getAttribute("aria-label") || "").toLowerCase();
+        const tooltip = (btn.getAttribute("data-tooltip") || "").toLowerCase();
+        const title = (btn.getAttribute("title") || "").toLowerCase();
+        if (ariaLabel.includes(lower) || tooltip.includes(lower) || title.includes(lower)) {
+          return btn;
+        }
+      }
     }
     return null;
   }
 
-  /**
-   * テキスト内容を含む要素を探す。
-   */
   function findElementByText(selector, texts) {
     const elements = document.querySelectorAll(selector);
     for (const el of elements) {
@@ -85,31 +127,15 @@
 
   // --- ミーティング参加検知 ---
 
-  /**
-   * ミーティングに参加しているか判定する。
-   * 通話コントロールバー（マイク・カメラボタン等）が存在するかで判定。
-   */
   function isInMeeting() {
-    // 通話終了ボタンの存在チェック
-    const leaveButton = findButtonByAriaLabel([
-      "通話から退出",
-      "Leave call",
-      "Salir de la llamada",
+    const leaveButton = findButtonByAttributes([
+      "通話から退出", "Leave call",
     ]);
     if (leaveButton) return true;
 
-    // 通話コントロールバーの存在チェック
-    const controls = document.querySelector(
-      '[data-call-controls="true"], [data-is-muted]'
-    );
-    if (controls) return true;
-
-    // マイクボタンの存在チェック
-    const micButton = findButtonByAriaLabel([
-      "マイクをオフ",
-      "マイクをオン",
-      "Turn off microphone",
-      "Turn on microphone",
+    const micButton = findButtonByAttributes([
+      "マイクをオフ", "マイクをオン",
+      "Turn off microphone", "Turn on microphone",
     ]);
     if (micButton) return true;
 
@@ -119,91 +145,121 @@
   // --- 録画操作 ---
 
   /**
-   * 「その他のオプション」(縦3点) メニューを開く。
-   * aria-label / data-tooltip / ツールチップテキストなど複数の方法で検索。
+   * 縦3点 (⋮) ボタンを探す。
+   * 複数の方法で検索し、見つからない場合はデバッグ情報を出力。
    */
-  async function openMoreOptionsMenu() {
-    log("「その他のオプション」(縦3点) ボタンを探しています...");
+  async function findMoreOptionsButton() {
+    let btn = null;
 
-    let moreButton = null;
-
-    // 方法1: aria-label / data-tooltip で検索
-    moreButton = findButtonByAriaLabel([
+    // 方法1: aria-label / data-tooltip / title 属性
+    btn = findButtonByAttributes([
       "その他のオプション",
+      "その他",
       "More options",
-      "Más opciones",
     ]);
+    if (btn) { log("方法1 (属性) で3点ボタンを発見"); return btn; }
 
-    // 方法2: data-promo 属性で検索 (Google Meet が使う場合あり)
-    if (!moreButton) {
-      moreButton = document.querySelector(
-        'button[data-promo*="more"], [role="button"][data-promo*="more"]'
-      );
+    // 方法2: material icon "more_vert" テキスト
+    const icons = document.querySelectorAll("i, span");
+    for (const icon of icons) {
+      if (icon.textContent.trim() === "more_vert") {
+        btn = icon.closest("button") || icon.closest('[role="button"]');
+        if (btn) { log("方法2 (more_vert アイコン) で3点ボタンを発見"); return btn; }
+      }
     }
 
-    // 方法3: 通話バー内の縦3点アイコンボタンを探す
-    // Google Meet の3点ボタンは通常、退出ボタンの左隣にある
-    if (!moreButton) {
+    // 方法3: 退出ボタンの近くにあるボタンを探す
+    // 退出ボタン (赤い電話ボタン) を基準に、その直前のボタンが3点メニュー
+    const leaveBtn = findButtonByAttributes([
+      "通話から退出", "Leave call",
+    ]);
+    if (leaveBtn) {
+      const leaveRect = leaveBtn.getBoundingClientRect();
+      const candidates = [];
       const allButtons = document.querySelectorAll('button, [role="button"]');
-      for (const btn of allButtons) {
-        const label = (btn.getAttribute("aria-label") || "")
-          + (btn.getAttribute("data-tooltip") || "");
-        if (
-          label.includes("その他") ||
-          label.includes("More option") ||
-          label.includes("more option")
-        ) {
-          moreButton = btn;
-          break;
+      for (const b of allButtons) {
+        if (b === leaveBtn) continue;
+        const r = b.getBoundingClientRect();
+        // 同じ行（Y座標が近い）で、退出ボタンの左側にあるボタン
+        if (Math.abs(r.top - leaveRect.top) < 30 && r.right < leaveRect.left && r.right > leaveRect.left - 200) {
+          candidates.push({ btn: b, distance: leaveRect.left - r.right });
         }
+      }
+      // 退出ボタンに最も近いボタンを選択
+      candidates.sort((a, b) => a.distance - b.distance);
+      if (candidates.length > 0) {
+        log(`方法3 (退出ボタン隣接) で3点ボタン候補を発見 (距離: ${candidates[0].distance.toFixed(0)}px)`);
+        return candidates[0].btn;
       }
     }
 
-    // 方法4: material icon "more_vert" を含むボタンを探す
-    if (!moreButton) {
-      const icons = document.querySelectorAll(
-        'i.material-icons, i.google-material-icons, .google-symbols'
-      );
-      for (const icon of icons) {
-        if (icon.textContent.trim() === "more_vert") {
-          moreButton = icon.closest("button") || icon.closest('[role="button"]');
-          if (moreButton) break;
+    // 方法4: 画面下部の右寄りにある小さめのボタンを探す
+    // 3点ボタンはアイコンのみで、テキストが空または非常に短い
+    const allButtons = document.querySelectorAll('button, [role="button"]');
+    const bottomRight = [];
+    for (const b of allButtons) {
+      const r = b.getBoundingClientRect();
+      const screenW = window.innerWidth;
+      const screenH = window.innerHeight;
+      // 画面下部20%、中央〜右寄り
+      if (r.top > screenH * 0.8 && r.left > screenW * 0.4 && r.left < screenW * 0.8) {
+        const text = b.textContent.trim();
+        const ariaLabel = b.getAttribute("aria-label") || "";
+        // テキストが空かアイコンテキストのみ
+        if (text.length <= 15 && !ariaLabel.includes("マイク") && !ariaLabel.includes("カメラ")) {
+          bottomRight.push({ btn: b, x: r.left, label: ariaLabel, text });
         }
       }
     }
-
-    if (!moreButton) {
-      throw new Error("「その他のオプション」ボタンが見つかりません");
+    // X座標が大きい（右寄り）順にソート、退出ボタン以外で最も右のもの
+    bottomRight.sort((a, b) => b.x - a.x);
+    for (const item of bottomRight) {
+      if (!item.label.includes("退出") && !item.label.includes("Leave")) {
+        log(`方法4 (位置ベース) で候補発見: label="${item.label}", text="${item.text}"`);
+        return item.btn;
+      }
     }
 
-    log("3点メニューボタンを見つけました。クリックします...");
-    moreButton.click();
-    await sleep(1000);
+    return null;
   }
 
-  /**
-   * メニューから「録画を管理する」を選択
-   */
+  async function openMoreOptionsMenu() {
+    log("縦3点メニューボタンを探しています...");
+
+    // デバッグ: 全ボタンの情報を出力
+    debugDumpButtons();
+
+    const moreButton = await waitForElement(findMoreOptionsButton, 8000, 1000);
+
+    log("3点メニューボタンをクリックします...");
+    moreButton.click();
+    await sleep(1500);
+  }
+
   async function clickRecordingMenuItem() {
     log("録画メニュー項目を探しています...");
 
+    // デバッグ: メニュー項目をダンプ
+    debugDumpMenuItems();
+
     const menuItem = await waitForElement(() => {
-      // メニュー項目 / リスト項目 / div 等、幅広くテキスト検索
+      // 非常に広いセレクタで検索
       return findElementByText(
-        'li, [role="menuitem"], [role="option"], [role="menuitemradio"], ul > div, ul li span',
+        'li, [role="menuitem"], [role="option"], [role="menuitemradio"], [role="listitem"], div[tabindex], span[tabindex]',
         [
           "録画を管理する",
           "録画を管理",
           "ミーティングを録画",
-          "録画",
           "Manage recording",
           "Record meeting",
           "Recording",
         ]
       );
-    }, 5000);
+    }, 8000);
 
     if (!menuItem) {
+      // もう一度ダンプしてから失敗
+      debugDumpMenuItems();
       throw new Error("録画メニュー項目が見つかりません");
     }
     log(`録画メニュー項目「${menuItem.textContent.trim()}」をクリックします`);
@@ -211,39 +267,23 @@
     await sleep(1500);
   }
 
-  /**
-   * 「録画を開始」ボタンをクリック
-   */
   async function clickStartRecording() {
     log("「録画を開始」ボタンを探しています...");
 
     const startButton = await waitForElement(() => {
-      // ボタンのテキストから検索
-      const btn = findElementByText("button, [role='button']", [
+      const btn = findElementByText("button, [role='button'], span, div", [
         "録画を開始",
         "Start recording",
-        "Iniciar grabación",
       ]);
       if (btn) return btn;
+      return findButtonByAttributes(["録画を開始", "Start recording"]);
+    }, 8000);
 
-      // aria-label からも検索
-      return findButtonByAriaLabel([
-        "録画を開始",
-        "Start recording",
-      ]);
-    }, 5000);
-
-    if (!startButton) {
-      throw new Error("「録画を開始」ボタンが見つかりません");
-    }
     log("「録画を開始」ボタンをクリックします");
     startButton.click();
     await sleep(1500);
   }
 
-  /**
-   * 同意/確認ダイアログがあれば「開始」をクリック
-   */
   async function confirmRecordingDialog() {
     log("確認ダイアログを確認しています...");
     await sleep(1000);
@@ -271,28 +311,10 @@
     }
   }
 
-  /**
-   * 既に録画中かどうかを確認する
-   */
   function isAlreadyRecording() {
-    // 「REC」インジケーターの存在チェック
-    const recIndicator = findElementByText("*", ["REC"]);
-    if (
-      recIndicator &&
-      recIndicator.closest &&
-      recIndicator.closest('[data-recording="true"]')
-    ) {
-      return true;
-    }
-
-    // 録画停止ボタンの存在チェック
-    const stopButton = findButtonByAriaLabel([
-      "録画を停止",
-      "Stop recording",
-    ]);
+    const stopButton = findButtonByAttributes(["録画を停止", "Stop recording"]);
     if (stopButton) return true;
 
-    // 録画中を示す赤いドットの存在チェック
     const recordingDot = document.querySelector(
       '[data-recording-indicator], [aria-label*="Recording"]'
     );
@@ -301,20 +323,17 @@
     return false;
   }
 
-  /**
-   * 録画を開始するメインフロー
-   */
+  // --- メインフロー ---
+
   async function startRecording() {
     if (!isEnabled) {
       log("自動録画は無効です");
       return;
     }
-
     if (hasAttemptedRecording) {
       log("既に録画開始を試行済みです");
       return;
     }
-
     if (isAlreadyRecording()) {
       log("既に録画中です");
       hasAttemptedRecording = true;
@@ -325,29 +344,16 @@
     log("自動録画を開始します...");
 
     try {
-      // ステップ 1: 「その他のオプション」メニューを開く
       await openMoreOptionsMenu();
-
-      // ステップ 2: 「録画」メニュー項目をクリック
       await clickRecordingMenuItem();
-
-      // ステップ 3: 「録画を開始」ボタンをクリック
       await clickStartRecording();
-
-      // ステップ 4: 確認ダイアログがあれば承認
       await confirmRecordingDialog();
 
       log("録画の開始に成功しました！");
-
-      // background script に成功を通知
-      chrome.runtime.sendMessage({
-        type: "RECORDING_STATUS",
-        status: "started",
-      });
+      chrome.runtime.sendMessage({ type: "RECORDING_STATUS", status: "started" });
     } catch (error) {
       warn(`録画の開始に失敗しました: ${error.message}`);
-      hasAttemptedRecording = false; // リトライ可能にする
-
+      hasAttemptedRecording = false;
       chrome.runtime.sendMessage({
         type: "RECORDING_STATUS",
         status: "failed",
@@ -356,7 +362,7 @@
     }
   }
 
-  // --- メイン監視ループ ---
+  // --- 監視ループ ---
 
   async function monitorMeeting() {
     log("ミーティング監視を開始します...");
@@ -364,20 +370,13 @@
 
     const checkInterval = setInterval(async () => {
       if (!isEnabled) return;
-
-      if (meetingDetected && hasAttemptedRecording) {
-        // 既に処理済み
-        return;
-      }
+      if (meetingDetected && hasAttemptedRecording) return;
 
       if (isInMeeting()) {
         if (!meetingDetected) {
           meetingDetected = true;
           log("ミーティングへの参加を検知しました！");
-
-          // ミーティング参加後、UIが安定するまで少し待機
           await sleep(5000);
-
           await startRecording();
         }
       } else {
@@ -389,7 +388,6 @@
       }
     }, POLL_INTERVAL_MS);
 
-    // ページ離脱時にクリーンアップ
     window.addEventListener("beforeunload", () => {
       clearInterval(checkInterval);
       meetingDetected = false;
@@ -397,7 +395,7 @@
     });
   }
 
-  // --- 設定の読み込み ---
+  // --- 設定 ---
 
   function loadSettings() {
     chrome.storage.sync.get({ autoRecordEnabled: true }, (items) => {
@@ -406,8 +404,6 @@
     });
   }
 
-  // --- 設定変更の監視 ---
-
   chrome.storage.onChanged.addListener((changes) => {
     if (changes.autoRecordEnabled) {
       isEnabled = changes.autoRecordEnabled.newValue;
@@ -415,7 +411,7 @@
     }
   });
 
-  // --- background script からのメッセージ受信 ---
+  // --- メッセージ受信 ---
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === "GET_STATUS") {
@@ -433,6 +429,10 @@
       hasAttemptedRecording = false;
       startRecording();
       sendResponse({ status: "retrying" });
+    } else if (message.type === "DEBUG_DUMP") {
+      debugDumpButtons();
+      debugDumpMenuItems();
+      sendResponse({ status: "dumped" });
     }
     return true;
   });
@@ -440,18 +440,15 @@
   // --- 初期化 ---
 
   function init() {
-    // meet.google.com のミーティングページのみで動作
     if (!window.location.href.match(/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}/i)) {
       log("ミーティングページではないためスキップします");
       return;
     }
-
     log("初期化中...");
     loadSettings();
     monitorMeeting();
   }
 
-  // DOM 準備完了後に初期化
   if (document.readyState === "complete" || document.readyState === "interactive") {
     init();
   } else {
