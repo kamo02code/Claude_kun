@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 300px;
+      font-family: "Segoe UI", "Noto Sans JP", sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      padding: 16px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #333;
+    }
+
+    .header h1 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .header .icon {
+      width: 24px;
+      height: 24px;
+      background: #e53935;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: #fff;
+      font-weight: bold;
+    }
+
+    .toggle-section {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px;
+      background: #16213e;
+      border-radius: 8px;
+      margin-bottom: 12px;
+    }
+
+    .toggle-label {
+      font-size: 13px;
+    }
+
+    .toggle-switch {
+      position: relative;
+      width: 44px;
+      height: 24px;
+    }
+
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #555;
+      transition: 0.3s;
+      border-radius: 24px;
+    }
+
+    .toggle-slider::before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: #fff;
+      transition: 0.3s;
+      border-radius: 50%;
+    }
+
+    .toggle-switch input:checked + .toggle-slider {
+      background-color: #e53935;
+    }
+
+    .toggle-switch input:checked + .toggle-slider::before {
+      transform: translateX(20px);
+    }
+
+    .status {
+      padding: 10px 12px;
+      background: #16213e;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      font-size: 12px;
+    }
+
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+
+    .status-item:last-child {
+      margin-bottom: 0;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .status-dot.active {
+      background: #4caf50;
+    }
+
+    .status-dot.inactive {
+      background: #777;
+    }
+
+    .status-dot.recording {
+      background: #e53935;
+      animation: pulse 1s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .retry-btn {
+      width: 100%;
+      padding: 8px;
+      background: #e53935;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .retry-btn:hover {
+      background: #c62828;
+    }
+
+    .retry-btn:disabled {
+      background: #555;
+      cursor: not-allowed;
+    }
+
+    .footer {
+      margin-top: 12px;
+      font-size: 10px;
+      color: #777;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="icon">REC</div>
+    <h1>Meet Auto Record</h1>
+  </div>
+
+  <div class="toggle-section">
+    <span class="toggle-label">自動録画</span>
+    <label class="toggle-switch">
+      <input type="checkbox" id="toggleEnabled" checked>
+      <span class="toggle-slider"></span>
+    </label>
+  </div>
+
+  <div class="status" id="statusSection">
+    <div class="status-item">
+      <span class="status-dot inactive" id="meetingDot"></span>
+      <span id="meetingStatus">ミーティング未検出</span>
+    </div>
+    <div class="status-item">
+      <span class="status-dot inactive" id="recordingDot"></span>
+      <span id="recordingStatus">録画未開始</span>
+    </div>
+  </div>
+
+  <button class="retry-btn" id="retryBtn" disabled>録画を再試行</button>
+
+  <div class="footer">
+    Google Meet Auto Record v1.0.0
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
